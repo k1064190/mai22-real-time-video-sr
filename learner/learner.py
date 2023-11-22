@@ -5,10 +5,15 @@ import random
 
 import numpy as np
 import tensorflow as tf
+from tensorflow import keras
+from tensorflow.python.keras.optimizer_v2.learning_rate_schedule import ExponentialDecay
 
 from learner.saver import Saver
 from learner.metric import PSNR, SSIM
-from util import common_util, constant_util, logger
+
+import logging
+import os
+import cv2 as cv
 
 
 class StandardLearner():
@@ -33,28 +38,26 @@ class StandardLearner():
         valid_steps: An `int` represents frequency  of validation.
     """
 
-    def __init__(self, config, model, dataset, log_dir):
+    def __init__(self, restore_ckpt, model, dataset, log_dir, steps=100):
         """Initialize the learner and attributes.
 
         Args:
-            config: Please refer to Attributes.
             model: Please refer to Attributes.
             dataset: Please refer to Attributes.
             log_dir: Please refer to Attributes.
         """
         super().__init__()
-        with common_util.check_config(config['general']) as cfg:
-            self.total_steps = cfg.pop('total_steps', constant_util.MAXIMUM_TRAIN_STEPS)
-            self.log_train_info_steps = cfg.pop(
-                'log_train_info_steps', constant_util.LOG_TRAIN_INFO_STEPS
-            )
-            self.keep_ckpt_steps = cfg.pop('keep_ckpt_steps', constant_util.KEEP_CKPT_STEPS)
-            self.valid_steps = cfg.pop('valid_steps', constant_util.VALID_STEPS)
 
-        self.config = config
+        self.total_steps = steps
         self.model = model
         self.dataset = dataset
         self.log_dir = log_dir
+        self.log_txt = os.path.join(log_dir, 'logs.txt')
+        self.restore_ckpt = restore_ckpt
+
+        self.log_train_info_steps = 100
+        self.keep_ckpt_steps = 5000
+        self.valid_steps = 1000
 
         self.step = 0
         self.optimizer = None
@@ -63,26 +66,38 @@ class StandardLearner():
         self.saver = None
         self.summary = None
 
-        # set random seed
-        random.seed(2454)
-        np.random.seed(2454)
-        tf.random.set_seed(2454)
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+        sh = logging.StreamHandler()
+        sh.setLevel(logging.INFO)
+        sh.setFormatter(formatter)
+        self.logger.addHandler(sh)
+
+        fh = logging.FileHandler(self.log_txt)
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(formatter)
+        self.logger.addHandler(fh)
 
     def register_training(self):
         """Prepare for training."""
         # prepare learning rate scheduler for training
-        lr_config = self.config['lr_scheduler'] if 'lr_scheduler' in self.config else {}
-        module = getattr(tf.keras.optimizers.schedules, lr_config.pop('name'))
-        self.lr_scheduler = module(**lr_config)
+        self.lr_scheduler = ExponentialDecay(
+            initial_learning_rate=0.0001,
+            decay_steps=100000,
+            decay_rate=0.96,
+            staircase=True,
+        )
 
         # prepare optimizer for training
-        opt_config = self.config['optimizer'] if 'optimizer' in self.config else {}
-        module = getattr(tf.keras.optimizers, opt_config.pop('name'))
-        self.optimizer = module(learning_rate=self.lr_scheduler, **opt_config)
+        self.optimizer = keras.optimizers.Adam(
+            learning_rate=self.lr_scheduler, beta_1=0.9, beta_2=0.999, epsilon=1e-8
+        )
 
         # prepare saver to save and load checkpoints
-        saver_config = self.config['saver'] if 'saver' in self.config else {}
-        self.saver = Saver(saver_config, self, is_train=True, log_dir=self.log_dir)
+        self.saver = Saver(self.restore_ckpt, self, is_train=True, log_dir=self.log_dir)
 
         # prepare metric functions
         self.metric_functions['psnr'] = PSNR(data_range=255)
@@ -91,8 +106,7 @@ class StandardLearner():
     def register_evaluation(self):
         """Prepare for evaluation."""
         # prepare saver to save and load checkpoints
-        saver_config = self.config['saver'] if 'saver' in self.config else {}
-        self.saver = Saver(saver_config, self, is_train=False, log_dir=self.log_dir)
+        self.saver = Saver(self.restore_ckpt, self, is_train=False, log_dir=self.log_dir)
 
         # prepare metric functions
         self.metric_functions['psnr'] = PSNR(data_range=255)
@@ -114,16 +128,12 @@ class StandardLearner():
     def log_metric(self, prefix=''):
         """Log the metric values."""
         metric_dict = {}
-        with self.summary.as_default(step=self.step):
-            for metric_name in self.metric_functions:
-                value = self.metric_functions[metric_name].get_result().numpy()
-                self.metric_functions[metric_name].reset()
+        for metric_name in self.metric_functions:
+            value = self.metric_functions[metric_name].get_result().numpy()
+            self.metric_functions[metric_name].reset()
 
-                tf.summary.scalar(prefix + metric_name, value)
-                metric_dict[metric_name] = value
-
-        logger.info(f'Step: {self.step}, {prefix}Metric: {metric_dict}')
-        self.summary.flush()
+            self.logger.info(f'Step: {self.step}, {prefix}Metric: {metric_name}: {value}')
+            metric_dict[metric_name] = value
 
     @tf.function
     def train_step(self, data):
@@ -191,14 +201,13 @@ class StandardLearner():
     def train(self):
         """Train the model."""
         self.register_training()
-        self.summary = tf.summary.create_file_writer(self.log_dir)
 
         # restore checkpoint
         if self.saver.restore_ckpt:
-            logger.info(f'Restore from {self.saver.restore_ckpt}')
+            self.logger.info(f'Restore from {self.saver.restore_ckpt}')
             self.saver.load_checkpoint()
         else:
-            logger.info('Train from scratch')
+            self.logger.info('Train from scratch')
 
         train_loader = self.dataset['train']
         train_iterator = iter(train_loader)
@@ -218,17 +227,7 @@ class StandardLearner():
 
             # log the training information every n steps
             if self.step % self.log_train_info_steps == 0:
-                with self.summary.as_default(step=self.step):
-                    logger.info(f'Step {self.step} train loss: {loss}')
-                    tf.summary.scalar('train_loss', loss)
-                    tf.summary.scalar('learning_rate', self.optimizer.lr(self.optimizer.iterations))
-                    tf.summary.image('pred', [pred[0] / 255.0])
-                    tf.summary.image(
-                        'input',
-                        [data_pair[0][0, -2, ...] / 255.0, data_pair[0][0, -1, ...] / 255.0]
-                    )
-                    tf.summary.image('target', [data_pair[1][0, -1, ...] / 255.0])
-                self.summary.flush()
+                self.logger.info(f'Step {self.step} train loss: {loss}, lr: {self.optimizer.lr(self.step)}')
 
             # save checkpoint every n steps
             if self.step % self.keep_ckpt_steps == 0:
@@ -252,10 +251,9 @@ class StandardLearner():
     def test(self):
         """Evaluate the model."""
         self.register_evaluation()
-        self.summary = tf.summary.create_file_writer(self.log_dir)
 
         # restore checkpoint
-        logger.info(f'Restore from {self.saver.restore_ckpt}')
+        self.logger.info(f'Restore from {self.saver.restore_ckpt}')
         self.saver.load_checkpoint()
 
         val_loader = self.dataset['val']

@@ -13,10 +13,9 @@ import pathlib
 import imageio
 import numpy as np
 import tensorflow as tf
+import os
 
 from dataset import transform
-from util import logger
-from util.common_util import check_config
 
 
 class REDS():
@@ -27,42 +26,22 @@ class REDS():
         /path/to/REDS/
         │
         ├── train/
-        │   ├── train_sharp/
+        │   ├── 720/
         │   │   ├── 000/
         │   │   ├── ...
         │   │   └── 239/
         │   │        ├── 00000000.png
         │   │        ├── ...
         │   │        └── 00000099.png
-        |   ├── train_blur/
-        │   ├── train_sharp_bicubic/
-        │   │   └── X4/
-        │   │       ├── 000/
-        |   │       ├── ...
-        │   │       └── 239/
-        │   │           ├── 00000000.png
-        │   │           ├── ...
-        │   │           └── 00000099.png
-        │   └── train_blur_bicubic/
+        │   ├── 180/
+        │         ├── 000/
+        |         ├── ...
+        │         └── 239/
+        │              ├── 00000000.png
+        │              ├── ...
+        │              └── 00000099.png
         └── val/
-            ├── val_sharp/
-            │   ├── 000/
-            │   ├── ...
-            │   └── 029/
-            │        ├── 00000000.png
-            │        ├── ...
-            │        └── 00000099.png
-            ├── val_blur/
-            ├── val_sharp_bicubic/
-            │   └── X4/
-            │       ├── 000/
-            │       ├── ...
-            │       └── 029/
-            │           ├── 00000000.png
-            │           ├── ...
-            │           └── 00000099.png
-            └── val_blur_bicubic/
-        (all sub-dir structure is similar)
+            ...
 
     Attributes:
         SPLITS: A `list` indicates all kinds of splits ('train', 'val') in the dataset.
@@ -75,9 +54,9 @@ class REDS():
     """
 
     SPLITS = ['train', 'val']
-    DEGRADATIONS = ['blur', 'blur_bicubic', 'sharp_bicubic']
+    DEGRADATIONS = ['180', '144', '360']
 
-    def __init__(self, dataset_config, split):
+    def __init__(self, data_dir, split, degradation, train_frame_num=1, test_frame_num=1):
         """Initialize `REDS` and prepare image list and label list.
 
         A sample `dataset_config` may look like the following
@@ -109,29 +88,16 @@ class REDS():
                 3. If `data_dir` is not a directory.
                 4. If the structure of the dataset is wrong.
         """
-        logger.check(split in self.SPLITS, f'Unexpected dataset split: `{split}`. ' + \
-                'Supported splits are: `train` and `val`')
+
+        self.degradation = degradation
+        self.crop_size = 224
 
         self.split = split
-        with check_config(copy.deepcopy(dataset_config)) as config:
-            data_dir = pathlib.Path(config.pop('data_dir'))
-            degradation = config.pop('degradation')
-            self.degradation = degradation
-            train_frame_num = config.pop('train_frame_num', 1)
-            test_frame_num = config.pop('test_frame_num', 1)
-            self.crop_size = config.pop('crop_size', 224)
-
-        logger.check(degradation in self.DEGRADATIONS,
-                f'Unexpected degradation: `{degradation}`. ' + \
-                'Supported degradations are: `blur`, `blur_bicubic` and `sharp_bicubic`')
-        logger.check(data_dir.is_dir(), f'`{data_dir}` is not a directory.')
 
         # parse all data files
-        image_dir = data_dir / split / f'{split}_{degradation}'
-        if 'bicubic' in degradation:
-            image_dir = image_dir / 'X4'
-        label_dir = data_dir / split / f'{split}_sharp'
-        filenames = sorted(image_dir.glob('**/*.png'))
+        image_dir = os.path.join(data_dir, split, degradation)
+        label_dir = os.path.join(data_dir, split, '720')
+        filenames = sorted(os.listdir(image_dir))
 
         self.image_list, self.label_list = [], []
         frame_num = train_frame_num if split == 'train' else test_frame_num
@@ -148,10 +114,6 @@ class REDS():
             if image_sequence and label_sequence:
                 self.image_list.append(image_sequence)
                 self.label_list.append(label_sequence)
-        logger.check(
-            len(self.image_list) and len(self.label_list),
-            'The structure of the dataset is wrong, please refer to the docstring of REDS.'
-        )
 
     def build(
         self,

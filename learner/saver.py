@@ -4,8 +4,6 @@ import pathlib
 
 import tensorflow as tf
 
-from util import common_util, logger
-
 
 class Saver:
     """Implement the saver to save and load checkpoints.
@@ -20,7 +18,7 @@ class Saver:
         restore_ckpt: A `str` represents the path to checkpoint where would be restored from.
     """
 
-    def __init__(self, saver_config, learner, is_train, log_dir=None):
+    def __init__(self, restore_ckpt, learner, is_train, log_dir=None):
         """Initialize the saver.
 
         A sample `saver_config` may look like the following
@@ -42,9 +40,7 @@ class Saver:
         self.learner = learner
         self.is_train = is_train
         self.log_dir = pathlib.Path(log_dir) if log_dir else None
-
-        with common_util.check_config(saver_config):
-            self.restore_ckpt = saver_config.pop('restore_ckpt', None)
+        self.restore_ckpt = restore_ckpt
 
         if is_train:
             self.ckpt = tf.train.Checkpoint(
@@ -59,7 +55,6 @@ class Saver:
         Raises:
             ValueError: If `log_dir` is None.
         """
-        logger.check(self.log_dir is not None, '`log_dir` should be initialized')
 
         # save checkpoint
         self.ckpt.save(self.log_dir / 'ckpt')
@@ -70,13 +65,14 @@ class Saver:
         Raises:
             ValueError: If `restore_ckpt` is None.
         """
-        logger.check(self.restore_ckpt is not None, '`restore_ckpt` should be initialized')
 
         # load checkpoint
         if self.is_train:
-            status = self.ckpt.restore(self.restore_ckpt)
+            latest_ckpt = tf.train.latest_checkpoint(self.restore_ckpt)
+            status = self.ckpt.restore(latest_ckpt)
             status.assert_existing_objects_matched()
             self.learner.step = self.learner.optimizer.iterations.numpy()
         else:
-            status = self.ckpt.restore(self.restore_ckpt).expect_partial()
+            latest_ckpt = tf.train.latest_checkpoint(self.restore_ckpt)
+            status = self.ckpt.restore(latest_ckpt).expect_partial()
             status.assert_existing_objects_matched()

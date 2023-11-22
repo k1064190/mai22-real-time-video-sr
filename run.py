@@ -8,7 +8,6 @@ import yaml
 
 from dataset import dataset_builder
 from learner.learner import StandardLearner
-from util import common_util, constant_util, plugin
 
 
 def _parse_argument():
@@ -23,11 +22,35 @@ def _parse_argument():
         required=True
     )
     parser.add_argument(
-        '--config_path',
-        help='Path of yaml config file of the application.',
+        '--degradation',
+        help='Degradation type.',
+        type=str,
+        default='144',
+        choices=['144', '360', '160', '180'],
+        required=False
+    )
+
+    parser.add_argument(
+        '--data_dir',
+        help='Directory to get dataset.',
+        type=str,
+        default='/home/sojong23/pngs/',
+        required=False
+    )
+
+    parser.add_argument(
+        '--restore_ckpt',
         type=str,
         default=None,
-        required=True
+        required=False
+    )
+
+    parser.add_argument(
+        '--log_dir',
+        help='Directory to save logs.',
+        type=str,
+        default='./logs/',
+        required=False
     )
 
     args = parser.parse_args()

@@ -10,6 +10,7 @@ classes:
 import collections
 
 import tensorflow as tf
+from tensorflow import keras
 
 # namedtuple for convenience.
 TFDataPair = collections.namedtuple('TFDataPair', ['image', 'label'])
@@ -82,105 +83,27 @@ class RandomVerticalFlipPair():
 
         return tf.compat.v1.cond(tf.random.uniform([]) > 0.5, _flip_up_down, lambda: data_pair)
 
+class RandomPermute:
+    """Randomly permute the given data pair.
 
-class RandomRot90Pair():
-    """Rotate 90 degrees on the given data pair randomly.
-
-    Could rotate one time or many times.
-
-    Attributes:
-        times: An integer, the times to rotate 90 degrees.
+    Should apply permutation on both image and label simultaneously.
     """
 
-    def __init__(self, times):
-        """Initialize with rotation arguments.
-
-        Args:
-            times: See `Attributes`.
-        """
-        self.times = times
-
     def __call__(self, data_pair):
-        """Use `tf.image.rot90` to run rotation on `tf.Tensor`."""
+        """Use `tf.random.shuffle` to run permutation on `tf.Tensor`."""
 
-        def _rotate():
-            """Perform rotation."""
-            image = tf.image.rot90(data_pair.image, k=self.times)
-            label = tf.image.rot90(data_pair.label, k=self.times)
+        def _permute():
+            """Perform permutation."""
+            """
+                numpy version
+                    perm = np.random.permutation(3)
+                    im1 = im1[:, perm]
+                    im2 = im2[:, perm]
+            """
+            perm = tf.random.shuffle([0, 1, 2])
+            image = tf.gather(data_pair.image, perm, axis=-1)
+            label = tf.gather(data_pair.label, perm, axis=-1)
             return TFDataPair(image, label)
 
-        return tf.compat.v1.cond(tf.random.uniform([]) > 0.5, _rotate, lambda: data_pair)
+        return tf.compat.v1.cond(tf.random.uniform([]) > 0.5, _permute, lambda: data_pair)
 
-
-class RandomCropSRPair():
-    """For super resolution data, crop a patch from given data pair randomly.
-
-    Since the output of super resolution is larger than input. Will use `scale` to adjust the crop
-    size of input-image and output-ground-truth.
-
-    Attributes:
-        lr_crop_size: A `tuple` represents desired output size (height, width) of
-            low-resolution input.
-            The crop size of high-resolution target is `lr_crop_size` * `scale`.
-        scale: An `int` represents the scale ratio between the high-resolution target to
-            low-resolution input.
-    """
-
-    def __init__(self, lr_crop_size, scale):
-        """Initialize the arguments.
-
-        Args:
-            lr_crop_size: Please refer to Attributes.
-            scale: Please refer to Attributes.
-        """
-        self.lr_crop_size = lr_crop_size
-        self.scale = scale
-
-    def __call__(self, data_pair):
-        """Use `tf.image.random_crop` to crop on `tf.Tensor`."""
-        # get parameters for the random crop
-        height, width = tf.shape(data_pair.image)[1], tf.shape(data_pair.image)[2]
-
-        h_crop, w_crop = self.lr_crop_size
-        h_start = tf.random.uniform([], maxval=height - h_crop + 1, dtype=tf.int32)
-        w_start = tf.random.uniform([], maxval=width - w_crop + 1, dtype=tf.int32)
-
-        # crop a patch as LR input, and then crop a larger patch (x scale) as HR output
-        image = tf.image.crop_to_bounding_box(data_pair.image, h_start, w_start, h_crop, w_crop)
-        label = tf.image.crop_to_bounding_box(
-            data_pair.label,
-            h_start * self.scale,
-            w_start * self.scale,
-            h_crop * self.scale,
-            w_crop * self.scale
-        )
-        return TFDataPair(image, label)
-
-
-class RandomCropPair():
-    """Crop a patch from given data pair randomly.
-
-    Attributes:
-        lr_crop_size: A `tuple` represents desired output size (height, width).
-    """
-
-    def __init__(self, crop_size):
-        """Initialize the arguments.
-
-        Args:
-            crop_size: Please refer to Attributes.
-        """
-        self.crop_size = crop_size
-
-    def __call__(self, data_pair):
-        """Use `tf.image.random_crop` to crop on `tf.Tensor`."""
-        # get parameters for the random crop
-        height, width = tf.shape(data_pair.image)[0], tf.shape(data_pair.image)[1]
-        h_crop, w_crop = self.crop_size
-        h_start = tf.random.uniform([], maxval=height - h_crop + 1, dtype=tf.int32)
-        w_start = tf.random.uniform([], maxval=width - w_crop + 1, dtype=tf.int32)
-
-        # crop a patch as LR input, and then crop a larger patch (x scale) as HR output
-        image = tf.image.crop_to_bounding_box(data_pair.image, h_start, w_start, h_crop, w_crop)
-        label = tf.image.crop_to_bounding_box(data_pair.label, h_start, w_start, h_crop, w_crop)
-        return TFDataPair(image, label)

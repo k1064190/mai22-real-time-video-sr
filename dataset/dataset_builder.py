@@ -1,7 +1,6 @@
 """Build the dataset."""
 
 from dataset.reds import REDS
-from util import logger
 
 
 def build_dataset(dataset_config):
@@ -32,14 +31,16 @@ def build_dataset(dataset_config):
     """
     dataloader = {}
 
-    dataloader_settings = dataset_config.pop('dataloader_settings')
+    dataloader_settings = [('train', {
+        'batch_size': 16,
+        'drop_remainder': True,
+        'shuffle': False
+    }), ('val', {
+        'batch_size': 1
+    })]
     # create datasets and dataloaders with different splits.
-    for split, dataloader_setting in dataloader_settings.items():
+    for split, dataloader_setting in dataloader_settings:
         # check the given split is valid or not.
-        logger.check(
-            split.lower() in [x.lower() for x in REDS.SPLITS],
-            f'Unexpected dataset split `{split}`'
-        )
 
         # build dataset
         dataset = REDS(dataset_config, split=split.lower())
